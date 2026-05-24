@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Speech to Text</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: #fff;
+      padding: 20px;
+      text-align: center;
+    }
+    #status {
+      font-size: 22px;
+      margin-bottom: 20px;
+      color: #333;
+    }
+    #btn {
+      width: 160px;
+      height: 160px;
+      border-radius: 50%;
+      border: none;
+      background: #e53935;
+      color: #fff;
+      font-size: 20px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-bottom: 24px;
+    }
+    #btn.listening {
+      background: #43a047;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(67,160,71,0.5); }
+      70%  { box-shadow: 0 0 0 24px rgba(67,160,71,0); }
+      100% { box-shadow: 0 0 0 0 rgba(67,160,71,0); }
+    }
+    #output {
+      width: 100%;
+      max-width: 480px;
+      min-height: 120px;
+      border: 2px solid #ccc;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 18px;
+      color: #111;
+      line-height: 1.6;
+      background: #f9f9f9;
+      text-align: left;
+    }
+    #copy-btn {
+      margin-top: 16px;
+      padding: 14px 36px;
+      font-size: 18px;
+      background: #1565c0;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #hint {
+      margin-top: 20px;
+      font-size: 13px;
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="status" aria-live="polite">Starting mic…</div>
+  <button id="btn" aria-label="Tap to stop. Double-tap to exit.">🔴 Stop</button>
+  <div id="output" aria-live="polite" aria-label="Transcribed text"></div>
+  <button id="copy-btn" aria-label="Copy transcribed text">Copy Text</button>
+  <p id="hint">Double-tap the mic button to close</p>
+
+  <script>
+    const btn = document.getElementById('btn');
+    const status = document.getElementById('status');
+    const output = document.getElementById('output');
+    const copyBtn = document.getElementById('copy-btn');
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      status.textContent = 'Speech recognition not supported.';
+      btn.disabled = true;
+    }
+
+    let recognition;
+    let listening = false;
+    let tapCount = 0;
+    let tapTimer = null;
+
+    function startListening() {
+      recognition = new SR();
+      recognition.lang = 'en-US';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onstart = () => {
+        listening = true;
+        btn.classList.add('listening');
+        btn.textContent = '🔴 Stop';
+        status.textContent = 'Listening…';
+      };
+
+      recognition.onresult = (e) => {
+        let final = output.dataset.final || '';
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) {
+            final += e.results[i][0].transcript + ' ';
+          } else {
+            interim += e.results[i][0].transcript;
+          }
+        }
+        output.dataset.final = final;
+        output.textContent = final + interim;
+      };
+
+      recognition.onerror = (e) => {
+        if (e.error === 'not-allowed') {
+          status.textContent = 'Microphone permission denied.';
+        } else {
+          status.textContent = 'Error: ' + e.error + '. Retrying…';
+          setTimeout(() => { if (listening) startListening(); }, 1000);
+        }
+      };
+
+      recognition.onend = () => {
+        if (listening) recognition.start(); // keep alive
+      };
+
+      recognition.start();
+    }
+
+    function stopListening() {
+      listening = false;
+      if (recognition) recognition.abort();
+      btn.classList.remove('listening');
+      btn.textContent = '🎤 Start';
+      btn.setAttribute('aria-label', 'Tap to start. Double-tap to exit.');
+      status.textContent = 'Stopped. Tap to speak again.';
+    }
+
+    function exitApp() {
+      stopListening();
+      status.textContent = 'Closing…';
+      try { window.close(); } catch(e) {}
+      setTimeout(() => {
+        try { history.go(-999); } catch(e) {}
+      }, 200);
+      setTimeout(() => {
+        try { window.location.href = 'about:blank'; } catch(e) {}
+      }, 400);
+    }
+
+    btn.addEventListener('click', () => {
+      tapCount++;
+      if (tapCount === 1) {
+        tapTimer = setTimeout(() => {
+          tapCount = 0;
+          if (listening) {
+            stopListening();
+          } else {
+            output.textContent = '';
+            output.dataset.final = '';
+            startListening();
+          }
+        }, 300);
+      } else if (tapCount >= 2) {
+        clearTimeout(tapTimer);
+        tapCount = 0;
+        exitApp();
+      }
+    });
+
+    copyBtn.addEventListener('click', () => {
+      const text = output.textContent.trim();
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        status.textContent = 'Copied!';
+        setTimeout(() => { status.textContent = listening ? 'Listening…' : 'Stopped.'; }, 1500);
+      }).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        status.textContent = 'Copied!';
+        setTimeout(() => { status.textContent = listening ? 'Listening…' : 'Stopped.'; }, 1500);
+      });
+    });
+
+    // Auto-start on load
+    window.addEventListener('load', () => {
+      setTimeout(startListening, 500);
+    });
+  </script>
+</body>
+</html>
